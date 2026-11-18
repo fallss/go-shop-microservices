@@ -1,0 +1,27 @@
+### 1. Health Check
+GET http://localhost:8082/health
+
+### 2. List All Orders
+GET http://localhost:8082/orders
+
+### 3. Create Order
+POST http://localhost:8082/orders
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "product_id": "p-1",
+      "quantity": 1
+    }
+  ]
+}
+
+### 4. Get Order by ID
+GET http://localhost:8082/orders/ord-1
+
+### 5. Cancel Order
+POST http://localhost:8082/orders/ord-1/cancel
+
+### 6. Cancel Order Lagi (Akan Return 409 Conflict)
+POST http://localhost:8082/orders/ord-1/cancel
