@@ -99,3 +99,79 @@ func TestListOrdersFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestGetOrder(t *testing.T) {
+	h := newHandler()
+	post(h, `{"items":[{"product_id":"p-1","quantity":1}]}`)
+
+	// Case 1: found -> 200 + order
+	{
+		rec := httptest.NewRecorder()
+		h.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orders/ord-1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		var o Order
+		if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+			t.Fatal(err)
+		}
+		if o.ID != "ord-1" {
+			t.Fatalf("got order ID %s, want ord-1", o.ID)
+		}
+	}
+
+	// Case 2: not found -> 404 + {"error": "..."}
+	{
+		rec := httptest.NewRecorder()
+		h.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orders/ord-999", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+		var errResp map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+			t.Fatal(err)
+		}
+		if errResp["error"] == "" {
+			t.Fatalf("expected non-empty error message, got: %s", rec.Body.String())
+		}
+	}
+}
+
+func TestCancelOrder(t *testing.T) {
+	h := newHandler()
+	post(h, `{"items":[{"product_id":"p-1","quantity":1}]}`)
+
+	// Case 1: cancel success (200 OK, status: cancelled)
+	{
+		rec := httptest.NewRecorder()
+		h.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/orders/ord-1/cancel", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		var o Order
+		if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+			t.Fatal(err)
+		}
+		if o.Status != StatusCancelled {
+			t.Fatalf("status = %s, want %s", o.Status, StatusCancelled)
+		}
+	}
+
+	// Case 2: order not found (404)
+	{
+		rec := httptest.NewRecorder()
+		h.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/orders/ord-999/cancel", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	}
+
+	// Case 3: already cancelled (409 Conflict)
+	{
+		rec := httptest.NewRecorder()
+		h.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/orders/ord-1/cancel", nil))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", rec.Code)
+		}
+	}
+}

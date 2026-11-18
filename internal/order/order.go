@@ -12,7 +12,15 @@ import (
 	"github.com/example/shop-microservices/internal/httpx"
 )
 
-const StatusPending = "pending"
+const (
+	StatusPending   = "pending"
+	StatusCancelled = "cancelled"
+)
+
+var (
+	ErrOrderNotFound   = errors.New("order not found")
+	ErrOrderNotPending = errors.New("order cannot be cancelled")
+)
 
 type Item struct {
 	ProductID string `json:"product_id"`
@@ -63,6 +71,34 @@ func (s *Store) List(status string) []Order {
 	return out
 }
 
+// Get returns an order by ID.
+func (s *Store) Get(id string) (Order, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, o := range s.orders {
+		if o.ID == id {
+			return o, true
+		}
+	}
+	return Order{}, false
+}
+
+// Cancel changes order status to "cancelled" if it is currently "pending".
+func (s *Store) Cancel(id string) (Order, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, o := range s.orders {
+		if o.ID == id {
+			if o.Status != StatusPending {
+				return Order{}, ErrOrderNotPending
+			}
+			s.orders[i].Status = StatusCancelled
+			return s.orders[i], nil
+		}
+	}
+	return Order{}, ErrOrderNotFound
+}
+
 // Handler wires HTTP to the store and the product client.
 type Handler struct {
 	store    *Store
@@ -71,17 +107,45 @@ type Handler struct {
 
 func NewHandler(s *Store, pc ProductClient) *Handler { return &Handler{store: s, products: pc} }
 
-// Routes registers: GET /health, GET /orders, POST /orders.
+// Routes registers: GET /health, GET /orders, GET /orders/{id}, POST /orders, POST /orders/{id}/cancel.
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpx.Health("order-service"))
 	mux.HandleFunc("GET /orders", h.list)
+	mux.HandleFunc("GET /orders/{id}", h.get)
 	mux.HandleFunc("POST /orders", h.create)
+	mux.HandleFunc("POST /orders/{id}/cancel", h.cancel)
 	return mux
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, h.store.List(r.URL.Query().Get("status")))
+}
+
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	o, ok := h.store.Get(r.PathValue("id"))
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "order not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, o)
+}
+
+func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
+	o, err := h.store.Cancel(r.PathValue("id"))
+	if errors.Is(err, ErrOrderNotFound) {
+		httpx.Error(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if errors.Is(err, ErrOrderNotPending) {
+		httpx.Error(w, http.StatusConflict, "order cannot be cancelled")
+		return
+	}
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, o)
 }
 
 type createRequest struct {
